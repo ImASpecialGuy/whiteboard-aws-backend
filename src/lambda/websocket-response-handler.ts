@@ -38,10 +38,19 @@ export async function handler(event: EventBridgeEvent<'EventResponse', ResponseE
   console.log('Triggered by ', event);
   const connections = await getConnections(event.detail.senderConnectionId, event.detail.chatId);
   console.log('Found connections in this region ', connections);
+  const packet = JSON.parse(event.detail.message);
   const postToConnectionPromises = connections
     .map((connectionId: string) => gatewayClient.postToConnection({
       ConnectionId: connectionId,
-      Data: JSON.stringify({ data: event.detail.message }),
+      // Data: `From ${event.detail.senderConnectionId}: ${event.detail.message}`,
+      // JSON.stringify({ sender: event.detail.senderConnectionId, msg: event.detail.message }),
+      Data: JSON.stringify({
+        sender: event.detail.senderConnectionId,
+        packetNum: packet.packetNum,
+        packetCount: packet.packetCount,
+        packetID: packet.packetID,
+        contents: packet.contents,
+      }),
     }).promise());
   await Promise.allSettled(postToConnectionPromises!);
   return true;

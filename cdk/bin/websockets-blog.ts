@@ -6,7 +6,8 @@ import { WebsocketsBlogStack } from '../lib/websockets-blog-stack';
 
 const app = new cdk.App();
 
-const regionsToDeploy = ['us-west-1', 'eu-west-1', 'ap-northeast-1'];
+// const regionsToDeploy = ['us-west-1', 'eu-west-1', 'ap-northeast-1'];
+const regionsToDeploy = ['eu-west-2'];
 
 // Regional stacks
 regionsToDeploy.forEach((regionCode) => {
