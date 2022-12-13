@@ -1,18 +1,22 @@
-import {CfnOutput, Duration, RemovalPolicy, Stack, StackProps,} from 'aws-cdk-lib';
-import {Construct} from 'constructs';
+import {
+  CfnOutput, Duration, RemovalPolicy, Stack, StackProps,
+} from 'aws-cdk-lib';
+import { Construct } from 'constructs';
 
-import {AttributeType, BillingMode, Table} from 'aws-cdk-lib/aws-dynamodb';
-import {WebSocketLambdaIntegration} from '@aws-cdk/aws-apigatewayv2-integrations-alpha';
+import { AttributeType, BillingMode, Table } from 'aws-cdk-lib/aws-dynamodb';
+import { WebSocketLambdaIntegration } from '@aws-cdk/aws-apigatewayv2-integrations-alpha';
 import * as apigwv2 from '@aws-cdk/aws-apigatewayv2-alpha';
-import {NodejsFunction} from 'aws-cdk-lib/aws-lambda-nodejs';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as events from 'aws-cdk-lib/aws-events';
-import {Runtime, Tracing} from 'aws-cdk-lib/aws-lambda';
-import {Effect, PolicyStatement, Role, ServicePrincipal,} from 'aws-cdk-lib/aws-iam';
-import {EventBus, LambdaFunction} from 'aws-cdk-lib/aws-events-targets';
+import { Runtime, Tracing } from 'aws-cdk-lib/aws-lambda';
+import {
+  Effect, PolicyStatement, Role, ServicePrincipal,
+} from 'aws-cdk-lib/aws-iam';
+import { EventBus, LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
 import path = require('path');
-import {Route} from "aws-cdk-lib/aws-appmesh";
-import {CfnRoute, CfnRouteResponse} from "aws-cdk-lib/aws-apigatewayv2";
-import {WebSocketRoute, WebSocketRouteIntegration} from "@aws-cdk/aws-apigatewayv2-alpha";
+import { Route } from 'aws-cdk-lib/aws-appmesh';
+import { CfnRoute, CfnRouteResponse } from 'aws-cdk-lib/aws-apigatewayv2';
+import { WebSocketRoute, WebSocketRouteIntegration } from '@aws-cdk/aws-apigatewayv2-alpha';
 
 export interface SimpleLambdaProps {
   memorySize?: number;
