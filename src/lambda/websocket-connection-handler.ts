@@ -12,28 +12,34 @@ const dynamoDbClient: DocumentClient = new AWS.DynamoDB.DocumentClient({
   region: process.env.AWS_REGION,
 });
 
+const gatewayClient = new AWS.ApiGatewayManagementApi({
+  apiVersion: '2018-11-29',
+  endpoint: process.env.API_GATEWAY_ENDPOINT,
+});
+
 export async function connectionHandler(event: APIGatewayEvent): Promise<any> {
   const { eventType, connectionId } = event.requestContext;
 
   if (eventType === 'CONNECT') {
     const oneHourFromNow = Math.round(Date.now() / 1000 + 3600);
     await dynamoDbClient.put({
-      TableName: process.env.TABLE_NAME!,
+      TableName: process.env.CONNECTION_TABLE_NAME!,
       Item: {
         connectionId,
-        chatId: 'DEFAULT',
+        whiteboardId: 'DEFAULT',
         ttl: oneHourFromNow,
       },
     }).promise();
+
     return generateLambdaProxyResponse(200, 'Connected');
   }
 
   if (eventType === 'DISCONNECT') {
     await dynamoDbClient.delete({
-      TableName: process.env.TABLE_NAME!,
+      TableName: process.env.CONNECTION_TABLE_NAME!,
       Key: {
         connectionId,
-        chatId: 'DEFAULT',
+        whiteboardId: 'DEFAULT',
       },
     }).promise();
 

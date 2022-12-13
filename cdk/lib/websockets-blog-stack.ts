@@ -1,19 +1,18 @@
-import {
-  CfnOutput, Duration, RemovalPolicy, Stack, StackProps,
-} from 'aws-cdk-lib';
-import { Construct } from 'constructs';
+import {CfnOutput, Duration, RemovalPolicy, Stack, StackProps,} from 'aws-cdk-lib';
+import {Construct} from 'constructs';
 
-import { AttributeType, BillingMode, Table } from 'aws-cdk-lib/aws-dynamodb';
-import { WebSocketLambdaIntegration } from '@aws-cdk/aws-apigatewayv2-integrations-alpha';
+import {AttributeType, BillingMode, Table} from 'aws-cdk-lib/aws-dynamodb';
+import {WebSocketLambdaIntegration} from '@aws-cdk/aws-apigatewayv2-integrations-alpha';
 import * as apigwv2 from '@aws-cdk/aws-apigatewayv2-alpha';
-import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import {NodejsFunction} from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as events from 'aws-cdk-lib/aws-events';
-import { Runtime, Tracing } from 'aws-cdk-lib/aws-lambda';
-import {
-  Effect, PolicyStatement, Role, ServicePrincipal,
-} from 'aws-cdk-lib/aws-iam';
-import { EventBus, LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
+import {Runtime, Tracing} from 'aws-cdk-lib/aws-lambda';
+import {Effect, PolicyStatement, Role, ServicePrincipal,} from 'aws-cdk-lib/aws-iam';
+import {EventBus, LambdaFunction} from 'aws-cdk-lib/aws-events-targets';
 import path = require('path');
+import {Route} from "aws-cdk-lib/aws-appmesh";
+import {CfnRoute, CfnRouteResponse} from "aws-cdk-lib/aws-apigatewayv2";
+import {WebSocketRoute, WebSocketRouteIntegration} from "@aws-cdk/aws-apigatewayv2-alpha";
 
 export interface SimpleLambdaProps {
   memorySize?: number;
@@ -56,12 +55,50 @@ export class WebsocketsBlogStack extends Stack {
   constructor(scope: Construct, id: string, props: WebSocketStackProps) {
     super(scope, id, props);
 
-    const table = new Table(this, 'WebsocketConnections', {
+    // table for storing update packets
+    // packets stored until the full package is complete
+    // on complete package, delete table entries and update canvas
+    const packetTable = new Table(this, 'Packets', {
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.DESTROY,
+      tableName: 'Packets',
+      // packageId consists of: whiteboardId#sender#packetId
+      // this ensures every packageId is unique
+      partitionKey: {
+        name: 'packageId',
+        type: AttributeType.STRING,
+      },
+      // to represent the 1 to many relationship between the package and its packets
+      // a sort key is used where every packet is identified by its packetNum
+      sortKey: {
+        name: 'packetNum',
+        type: AttributeType.NUMBER,
+      },
+    });
+
+    // table for storing canvas states
+    // retrieved when a new user joins
+    // updated when an update package is completed
+    // currently only using 1 whiteboard, so use 'DEFAULT' as only partition key
+    const canvasTable = new Table(this, 'Canvases', {
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.DESTROY,
+      tableName: 'Canvases',
+      // identify canvas by whiteboardId alone, as there is 1 canvas per whiteboard session
+      partitionKey: {
+        name: 'whiteboardId',
+        type: AttributeType.STRING,
+      },
+    });
+
+    // table for storing web socket connections
+    // currently only using 1 whiteboard, so use 'DEFAULT' as only partition key
+    const connectionTable = new Table(this, 'WebsocketConnections', {
       billingMode: BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY,
       tableName: 'WebsocketConnections',
       partitionKey: {
-        name: 'chatId',
+        name: 'whiteboardId',
         type: AttributeType.STRING,
       },
       sortKey: {
@@ -71,7 +108,7 @@ export class WebsocketsBlogStack extends Stack {
     });
     // dedicated event bus
     const eventBus = new events.EventBus(this, 'EventBus', {
-      eventBusName: 'ChatEventBus',
+      eventBusName: 'WhiteboardEventBus',
     });
 
     // (Dis-)connect handler
@@ -81,17 +118,32 @@ export class WebsocketsBlogStack extends Stack {
       name: 'ConnectionHandler',
       description: 'Handles the onConnect & onDisconnect events emitted by the WebSocket API Gateway',
       envVariables: {
-        TABLE_NAME: table.tableName,
+        CONNECTION_TABLE_NAME: connectionTable.tableName,
       },
     });
-    table.grantFullAccess(connectionLambda.fn);
+    connectionTable.grantFullAccess(connectionLambda.fn);
+    canvasTable.grantReadData(connectionLambda.fn);
+
+    // receive/store packets and update canvas when packages are complete
+    const dbUpdateLambda = new SimpleLambda(this, 'DbUpdateHandlerLambda', {
+      entryFilename: 'websocket-database-update-handler.ts',
+      handler: 'handleDBUpdate',
+      name: 'DbUpdateHandler',
+      description: 'Collects packets and updates database on receiving full update package',
+      envVariables: {
+        CANVAS_TABLE_NAME: canvasTable.tableName,
+        PACKET_TABLE_NAME: packetTable.tableName,
+      },
+    });
+    canvasTable.grantFullAccess(dbUpdateLambda.fn);
+    packetTable.grantFullAccess(dbUpdateLambda.fn);
 
     // Main (default route) handler
     const requestHandlerLambda = new SimpleLambda(this, 'RequestHandlerLambda', {
       entryFilename: 'websocket-request-handler.ts',
       handler: 'handleMessage',
       name: 'RequestHandler',
-      description: 'Handles requests sent via websocket and stores (connectionId, chatId) tuple in DynamoDB. Sends ChatMessageReceived events to EventBridge.',
+      description: 'Handles requests sent via websocket and stores (connectionId, whiteboardId) tuple in DynamoDB. Sends WhiteboardMessageReceived events to EventBridge.',
       envVariables: {
         BUS_NAME: eventBus.eventBusName,
       },
@@ -101,7 +153,7 @@ export class WebsocketsBlogStack extends Stack {
 
     const webSocketApi = new apigwv2.WebSocketApi(this, 'WebsocketApi', {
       apiName: 'WebSocketApi',
-      description: 'A regional Websocket API for the multi-region chat application.',
+      description: 'A regional Websocket API for the multi-region whiteboard application.',
       connectRouteOptions: {
         integration: new WebSocketLambdaIntegration('connectionIntegration', connectionLambda.fn),
       },
@@ -115,17 +167,32 @@ export class WebsocketsBlogStack extends Stack {
 
     const websocketStage = new apigwv2.WebSocketStage(this, 'WebsocketStage', {
       webSocketApi,
-      stageName: 'chat',
+      stageName: 'whiteboard',
       autoDeploy: true,
+    });
+
+    const stateHandler = new SimpleLambda(this, 'CanvasHandlerLambda', {
+      entryFilename: 'websocket-state-handler.ts',
+      handler: 'handleState',
+      name: 'StateHandler',
+      description: 'Sends all packages of the canvas state',
+      envVariables: {
+        PACKET_TABLE_NAME: packetTable.tableName,
+        API_GATEWAY_ENDPOINT: websocketStage.callbackUrl,
+      },
+    });
+
+    webSocketApi.addRoute('getState', {
+      integration: new WebSocketLambdaIntegration('GetStateIntegration', stateHandler.fn),
     });
 
     const processLambda = new SimpleLambda(this, 'ProcessEventLambda', {
       entryFilename: 'websocket-response-handler.ts',
       handler: 'handler',
       name: 'ProcessEvent',
-      description: 'Gets invoked when a new "ChatMessageReceived" event is published to EventBridge. The function determines the connectionIds and pushes the message to the clients',
+      description: 'Gets invoked when a new "WhiteboardMessageReceived" event is published to EventBridge. The function determines the connectionIds and pushes the message to the clients',
       envVariables: {
-        TABLE_NAME: table.tableName,
+        CONNECTION_TABLE_NAME: connectionTable.tableName,
         API_GATEWAY_ENDPOINT: websocketStage.callbackUrl,
       },
     });
@@ -141,9 +208,10 @@ export class WebsocketsBlogStack extends Stack {
 
     // Attach custom policy to Lambda function
     processLambda.fn.addToRolePolicy(allowConnectionManagementOnApiGatewayPolicy);
+    stateHandler.fn.addToRolePolicy(allowConnectionManagementOnApiGatewayPolicy);
 
     // An explicit, but empty IAM role is required.
-    // Otherwise the CDK will overwrite permissions for implicit roles for each region.
+    // Otherwise, the CDK will overwrite permissions for implicit roles for each region.
     // This leads to only the last written IAM policy being set and thus restricting the rule to a single region.
     const crossRegionEventRole = new Role(this, 'CrossRegionRole', {
       inlinePolicies: {},
@@ -163,20 +231,21 @@ export class WebsocketsBlogStack extends Stack {
     new events.Rule(this, 'ProcessRequest', {
       eventBus,
       enabled: true,
-      ruleName: 'ProcessChatMessage',
-      description: 'Invokes a Lambda function for each chat message to push the event via websocket and replicates the event to event buses in other regions.',
+      ruleName: 'ProcessWhiteboardMessage',
+      description: 'Invokes a Lambda function for each whiteboard update to push the event via websocket and replicates the event to event buses in other regions.',
       eventPattern: {
-        detailType: ['ChatMessageReceived'],
-        source: ['ChatApplication'],
+        detailType: ['WhiteboardMessageReceived'],
+        source: ['WhiteboardApplication'],
       },
       targets: [
         new LambdaFunction(processLambda.fn),
+        new LambdaFunction(dbUpdateLambda.fn),
         ...crossRegionalEventbusTargets,
       ],
     });
 
     eventBus.grantPutEventsTo(processLambda.fn);
-    table.grantReadData(processLambda.fn);
+    connectionTable.grantReadData(processLambda.fn);
 
     new CfnOutput(this, 'bucketName', {
       value: websocketStage.url,

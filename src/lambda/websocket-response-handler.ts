@@ -16,15 +16,15 @@ const gatewayClient = new AWS.ApiGatewayManagementApi({
 interface ResponseEventDetails {
   message: string;
   senderConnectionId: string;
-  chatId: string;
+  whiteboardId: string;
 }
 
-async function getConnections(senderConnectionId: string, chatId: string): Promise<any> {
+async function getConnections(senderConnectionId: string, whiteboardId: string): Promise<any> {
   const { Items: connections } = await dynamoDbClient.query({
-    TableName: process.env.TABLE_NAME!,
-    KeyConditionExpression: 'chatId = :c',
+    TableName: process.env.CONNECTION_TABLE_NAME!,
+    KeyConditionExpression: 'whiteboardId = :c',
     ExpressionAttributeValues: {
-      ':c': chatId,
+      ':c': whiteboardId,
     },
     ProjectionExpression: 'connectionId',
   }).promise();
@@ -36,14 +36,15 @@ async function getConnections(senderConnectionId: string, chatId: string): Promi
 
 export async function handler(event: EventBridgeEvent<'EventResponse', ResponseEventDetails>): Promise<any> {
   console.log('Triggered by ', event);
-  const connections = await getConnections(event.detail.senderConnectionId, event.detail.chatId);
+  const connections = await getConnections(
+    event.detail.senderConnectionId,
+    event.detail.whiteboardId,
+  );
   console.log('Found connections in this region ', connections);
   const packet = JSON.parse(event.detail.message);
   const postToConnectionPromises = connections
     .map((connectionId: string) => gatewayClient.postToConnection({
       ConnectionId: connectionId,
-      // Data: `From ${event.detail.senderConnectionId}: ${event.detail.message}`,
-      // JSON.stringify({ sender: event.detail.senderConnectionId, msg: event.detail.message }),
       Data: JSON.stringify({
         sender: event.detail.senderConnectionId,
         packetNum: packet.packetNum,

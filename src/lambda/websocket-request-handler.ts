@@ -12,11 +12,11 @@ export async function handleMessage(event: any) {
 
   const entry = {
     EventBusName: process.env.BUS_NAME,
-    Source: 'ChatApplication',
-    DetailType: 'ChatMessageReceived',
+    Source: 'WhiteboardApplication',
+    DetailType: 'WhiteboardMessageReceived',
     Detail: JSON.stringify({
       message: event.body,
-      chatId: 'DEFAULT',
+      whiteboardId: 'DEFAULT',
       senderConnectionId: event.requestContext.connectionId,
     }),
   };
